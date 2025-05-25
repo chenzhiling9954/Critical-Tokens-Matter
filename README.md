@@ -14,7 +14,10 @@ Repo for "<a href="https://arxiv.org/pdf/2411.19943" target="_blank">Critical To
 </p>
 
 ## 📣 Updates
-- **[2025.02.13]**: All the code from our [paper](https://arxiv.org/pdf/2411.19943) has been released. The training data and trained model will be available soon!
+- All the code from our [paper](https://arxiv.org/pdf/2411.19943) has been released.
+- Accepted to ICML 2025 🎉🎉🎉
+- Added support for Qwen2.5-7B/32B.
+- Released [our training data](https://huggingface.co/datasets/Lin1557/Critical-Tokens-Matter-Train-Data). To train models, please download the data and move it to the ./data directory.
 
 ## 💡 Introduction
 <div align=center>
@@ -63,7 +66,7 @@ python pipeline.py \
 gpus=<gpus>
 export CUDA_VISIBLE_DEVICES=$gpus
 python pipeline.py \
-  --task_name train_ce \
+  --task_name train_cdpo \
   --model_name <model_name> \
   --dataset_name <dataset_name> \
   --gpus $gpus

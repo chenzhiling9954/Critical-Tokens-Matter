@@ -23,13 +23,15 @@ def parse_args():
     parser = argparse.ArgumentParser()
 
     parser.add_argument("--model_name", type=str,
-                        choices=["Meta-Llama-3-8B", "deepseek-math-7b-base", "Meta-Llama-3-70B"])
+                        choices=["Meta-Llama-3-8B", "deepseek-math-7b-base", "Meta-Llama-3-70B", "Qwen2.5-7B", "Qwen2.5-32B"])
     parser.add_argument("--dataset_name", type=str, choices=["GSM8K", "MATH"])
     parser.add_argument("--task_name", type=str,
                         choices=["train_ce", "train_cdpo", "prepare_startup_data", "calculate_ce_score", "evaluation"])
     parser.add_argument("--lora_path", type=str, default=None)
     parser.add_argument("--model_path", type=str, default=None)
     parser.add_argument("--gpus", type=str, default=None)
+    parser.add_argument("--t", type=float, default=0)
+    parser.add_argument("--sampling_n", type=int, default=1)
 
     args = parser.parse_args()
 
@@ -63,14 +65,18 @@ class Pipeline:
             sft_data = {'config': data_selection_config, "pos": {}, "neg": {}}
             dpo_data = {'config': data_selection_config, "prompt": [], "chosen": [], "rejected": [], "answer": []}
             ava_false_ans_count = 0
+            has_error_question = 0
             for q_id in checked_result:
                 line = checked_result[q_id]
                 responses_with_check = line["generation_check"]
                 num_error_response = sum(
                     [1 if line[2] == False and line[1] != "" else 0 for line in responses_with_check])
+                if num_error_response > 0:
+                    has_error_question += 1
                 has_add_true = False
                 dpo_chosen = None
                 dpo_rejected = None
+                all_add_false = math.ceil(data_selection_config["sft_neg"]["top-p"] * num_error_response)
                 need_add_false = math.ceil(data_selection_config["sft_neg"]["top-p"] * num_error_response)
                 add_false_count = 0
                 random.shuffle(responses_with_check)
@@ -93,7 +99,7 @@ class Pipeline:
                                                  "response": clean_response,
                                                  "answer": line["answer"][0]}
                         has_add_true = True
-                    if need_add_false > 0 and response[2] == False:
+                    if need_add_false > 0 and response[2] == False and (need_add_false == all_add_false or count > 1):
                         sft_data["neg"][f"{q_id}_{add_false_count}"] = {"question": line["question"],
                                                                         "response": clean_response,
                                                                         "answer": line["answer"][0]}
@@ -107,11 +113,21 @@ class Pipeline:
                     if response[2] == False:
                         ava_false_ans_count += 1
                 if dpo_chosen is not None and dpo_rejected is not None:
-                    dpo_data["prompt"].append(line["prompt"])
+                    if 'prompt' in line:
+                        dpo_data["prompt"].append(line["prompt"])
+                    else:
+                        if self.dataset_name == "GSM8K":
+                            prompt = "Question: " + line["question"] + "\nAnswer: "
+                        elif self.dataset_name == "MATH":
+                            prompt = "Problem: " + line["question"] + "\nSolution: "
+                        dpo_data["prompt"].append(prompt)
                     dpo_data["answer"].append(line["answer"])
                     dpo_data["chosen"].append(dpo_chosen)
                     dpo_data["rejected"].append(dpo_rejected)
+                print("avg false answer: ", ava_false_ans_count / has_error_question)
+                print("error question", has_error_question)
             print(f"num of data in true: {len(sft_data['pos'])}, num of data in false: {len(sft_data['neg'])}")
+            print("avg false answer: ", ava_false_ans_count / has_error_question)
             with open(self.sft_data_path, "w", encoding="utf-8") as f:
                 f.write(json.dumps(sft_data, indent=2))
             with open(self.cdpo_data_path, "w", encoding="utf-8") as f:
@@ -221,7 +237,7 @@ class Pipeline:
                 data_with_cd_score["prob_result"].append(prob_result)
                 count += 1
                 if count % 50 == 0:
-                    with open(self.cdpo_data_with_ce_score_path.replace(".json", "unfinished.json"), "w",
+                    with open(self.cdpo_data_with_ce_score_path.replace(".json", "_unfinished.json"), "w",
                               encoding="utf-8") as f:
                         f.write(json.dumps(data_with_cd_score, indent=2))
             print(f"preference data with ce score saved at: {self.cdpo_data_with_ce_score_path}")
@@ -245,7 +261,7 @@ class Pipeline:
                                 dataset_path=self.sft_data_path,
                                 dataset_name=self.dataset_name,
                                 train_type=type,
-                                lora_path=self.sft_ckpt_path + "/" + type,
+                                lora_path=self.sft_ckpt_path + "/" + type + "/lora",
                                 hyperparameters=self.sft_config["hyperparameters"])
         print("=" * 50)
 
@@ -255,20 +271,23 @@ class Pipeline:
             print("Calculate CE score")
             self.calculate_ce_score()
             print("-" * 50)
-        cdpo_model_with_lora(model_path=self.cdpo_config["model_path"]["base"], lora_path=self.cdpo_ckpt_path,
+        cdpo_model_with_lora(model_name=self.model_name,
+                             model_path=self.cdpo_config["model_path"]["base"],
+                             lora_path=self.cdpo_ckpt_path,
                              dpo_data_with_ce_score_path=self.cdpo_data_with_ce_score_path,
                              hyperparameters=self.cdpo_config["hyperparameters"])
 
-    def evaluation(self, lora_path, model_path):
+    def evaluation(self, lora_path, model_path, t, sampling_n):
         print("=" * 50)
         # vLLM does not support PeftModel directly, so we need to merge the LoRA weights and save the model.
         if model_path is None:
             model_path = lora_path.replace("/checkpoints/", "/checkpoints/merged_model/")
             save_merged_model(base_model=self.cdpo_config["model_path"]["base"], lora_path=lora_path, save_path=model_path)
+            torch.cuda.empty_cache()
         print(f">>>>> Evaluate {model_path}")
         save_path = model_path.replace("/checkpoints", "/output")
         os.makedirs(save_path, exist_ok=True)
-        save_path = os.path.join(model_path.replace("/checkpoints", "/output"), "result.jsonl")
+        save_path = os.path.join(save_path, f"result_{t}.jsonl")
         if not os.path.exists(save_path):
             print(f">>>>> Result will be saved to {save_path}")
 
@@ -279,17 +298,20 @@ class Pipeline:
                 if self.dataset_name == "GSM8K":
                     line["prompt"] = "Question: " + line["question"] + "\nAnswer: "
                 elif self.dataset_name == "MATH":
-                    line["prompt"] = "Problem:\n" + line["question"] + "\n\nSolution:\n"
+                    line["prompt"] = "Problem: " + line["question"] + "\nSolution: "
                 else:
                     raise Exception(f"Unsupported dataset: {self.dataset_name}")
+            if t == 0 and sampling_n != 1:
+                print(">>>>> Temperature is 0, so sampling_n is set to 1.")
+                sampling_n = 1
             vllm_model_sampling(llm=llm,
                                 dataset=dataset,
                                 prompt_key="prompt",
                                 tokenizer=tokenizer,
-                                temperature=0,
+                                temperature=t,
                                 save_path=save_path,
                                 dataset_name=dataset_name,
-                                sampling_n=1,
+                                sampling_n=sampling_n,
                                 stop=self.sampling_config["stop"])
 
         result_list = list(load_jsonl(save_path))
@@ -299,21 +321,18 @@ class Pipeline:
             checked_result = json.load(f)
 
         acc = 0.0
+        count = 0.0
         for id in checked_result:
             line = checked_result[id]
-            if line["generation_check"][0][2]:
-                acc += 1
+            for c in line["generation_check"]:
+                if c[2]:
+                    acc += 1
+                count += 1
 
         print(f">>>>> {model_path}")
-        print(f">>>>> Accuracy: {acc / len(checked_result) * 100:.2f}%")
-
-
-
-
-
-
-
-
+        print(f">>>>> temperature: {t}")
+        print(f">>>>> sampling_n: {sampling_n}")
+        print(f">>>>> Average Accuracy: {acc / count * 100:.2f}%")
 
 
 
@@ -334,4 +353,4 @@ if __name__ == '__main__':
     elif task_name == "prepare_startup_data":
         pipeline.prepare_startup_data()
     elif task_name == "evaluation":
-        pipeline.evaluation(lora_path=args.lora_path, model_path=args.model_path)
+        pipeline.evaluation(lora_path=args.lora_path, model_path=args.model_path, t=args.t, sampling_n=args.sampling_n)

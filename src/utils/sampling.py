@@ -1,6 +1,5 @@
 import json
 import os
-
 from tqdm import tqdm
 import torch
 from transformers import AutoTokenizer, AutoModelForCausalLM
@@ -47,7 +46,7 @@ def vllm_model_sampling(llm, dataset, prompt_key, tokenizer, temperature, save_p
     existed_unfinished_result_list = None
     if os.path.exists(save_path.replace(".finished", ".unfinished")):
         existed_unfinished_result_list = []
-        with open(save_path, "r", encoding="utf-8") as f:
+        with open(save_path.replace(".finished", ".unfinished"), "r", encoding="utf-8") as f:
             for line in f.readlines():
                 existed_unfinished_result_list.append(json.loads(line))
         existed_result_ids = [line["id"] for line in existed_unfinished_result_list]
@@ -61,8 +60,10 @@ def vllm_model_sampling(llm, dataset, prompt_key, tokenizer, temperature, save_p
             return save_path
 
     print(f"temperature: {temperature}")
+    if temperature == 0:
+        sampling_n = 1
     sampling_params = SamplingParams(temperature=temperature,
-                                     top_p=1.0,
+                                     top_p=0.95,
                                      max_tokens=1024,
                                      n=sampling_n,
                                      stop=stop)
@@ -76,6 +77,7 @@ def vllm_model_sampling(llm, dataset, prompt_key, tokenizer, temperature, save_p
     for sample in dataset:
         final_prompt = few_shot_prompt + sample[prompt_key]
         inputs.append(final_prompt.strip())
+        sample['final_prompt'] = final_prompt
 
     inputs = [tokenizer.encode(i, add_special_tokens=False) for i in inputs]
 
@@ -92,7 +94,7 @@ def vllm_model_sampling(llm, dataset, prompt_key, tokenizer, temperature, save_p
         if existed_unfinished_result_list is not None:
             result_list += existed_unfinished_result_list
         print(f">>>>> save batch {i // batch_size} in {save_path}")
-        with open(save_path.replace("_finished", "_unfinished"), "w", encoding="utf-8") as f:
+        with open(save_path.replace(".finished", ".unfinished"), "w", encoding="utf-8") as f:
             for line in result_list:
                 f.write(json.dumps(line, ensure_ascii=False) + "\n")
     outputs = sorted(outputs, key=lambda x: int(x.request_id))

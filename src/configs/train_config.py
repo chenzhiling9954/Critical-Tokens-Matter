@@ -11,8 +11,16 @@ def get_model_path(model_name):
         model_path = {
             "base": "deepseek-ai/deepseek-math-7b-base",
         }
+    elif model_name == "Qwen2.5-7B":
+        model_path = {
+            "base": "Qwen/Qwen2.5-7B",
+        }
+    elif model_name == "Qwen2.5-32B":
+        model_path = {
+            "base": "Qwen/Qwen2.5-32B",
+        }
     else:
-        raise ValueError("Model name should be Meta-Llama-3-8B, Meta-Llama-3-70B or deepseek-math-7b-base")
+        raise ValueError("Model name should be Meta-Llama-3-8B, Meta-Llama-3-70B, deepseek-math-7b-base, Qwen2.5-7B or Qwen2.5-32B")
 
     return model_path
 
@@ -46,8 +54,8 @@ def get_cdpo_config(model_name):
         "beta": 0.1,
         "logging_steps": 10,
         "warmup_ratio": 0.1,
-        "max_length": 1024,
-        "max_prompt_length": 256,
+        "max_length": 1500,
+        "max_prompt_length": 512,
         "weight_decay": 0.01,
         "batch_size": 2,
         "gradient_accumulation_steps": 4,

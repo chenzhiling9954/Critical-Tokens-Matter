@@ -1,10 +1,13 @@
 import json
 import random
+import torch
 from transformers import TrainingArguments
 from datasets import Dataset
 from peft import LoraConfig
 from trl import SFTTrainer, DataCollatorForCompletionOnlyLM
+
 from utils.sampling import load_model
+from utils.utils import save_merged_model
 
 
 def load_data(file_path, train_type, dataset_name, use_hf_dataset=True, only_question=False, num_val=300):
@@ -105,5 +108,8 @@ def sft_model_with_lora(model_path, model_name, dataset_path, dataset_name,
     trainer.train()
     trainer.save_state()
     trainer.save_model(output_dir=lora_path)
+    del base_model
+    torch.cuda.empty_cache()
     print(f">>>>> Save model at: {lora_path}")
     print(f"-" * 50)
+    save_merged_model(base_model=model_path, lora_path=lora_path, save_path=lora_path.replace("/lora", ""))

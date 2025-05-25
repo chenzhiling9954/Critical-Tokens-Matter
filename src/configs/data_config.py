@@ -7,12 +7,16 @@ TEMPERATURE_BY_DATASET_AND_MODEL = {
     "GSM8K": {
         "Meta-Llama-3-8B": 0.5,
         "Meta-Llama-3-70B": 0.85,
-        "deepseek-math-7b-base": 1.0
+        "deepseek-math-7b-base": 1.0,
+        "Qwen2.5-7B": 0.9,
+        "Qwen2.5-32B": 1.1
     },
     "MATH": {
         "Meta-Llama-3-8B": 0.1,
         "Meta-Llama-3-70B": 0.15,
-        "deepseek-math-7b-base": 0.3
+        "deepseek-math-7b-base": 0.3,
+        "Qwen2.5-7B": 0.5,
+        "Qwen2.5-32B": 0.7
     }
 }
 
@@ -30,8 +34,16 @@ def get_model_path(model_name):
         model_path = {
             "base": "deepseek-ai/deepseek-math-7b-base",
         }
+    elif model_name == "Qwen2.5-7B":
+        model_path = {
+            "base": "Qwen/Qwen2.5-7B",
+        }
+    elif model_name == "Qwen2.5-32B":
+        model_path = {
+            "base": "Qwen/Qwen2.5-32B",
+        }
     else:
-        raise ValueError("Model name should be Meta-Llama-3-8B, Meta-Llama-3-70B or deepseek-math-7b-base")
+        raise ValueError("Model name should be Meta-Llama-3-8B, Meta-Llama-3-70B, deepseek-math-7b-base, Qwen2.5-7B or Qwen2.5-32B")
 
     return model_path
 

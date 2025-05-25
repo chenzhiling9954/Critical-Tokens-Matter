@@ -14,8 +14,9 @@ from utils.sampling import load_model
 
 
 class CDPOTrainer(DPOTrainer):
-    def __init__(self, only_neg, **kwargs):
+    def __init__(self, only_neg, model_name, **kwargs):
         self.only_neg = only_neg
+        self.model_name = model_name
         super().__init__(**kwargs)
 
     @staticmethod
@@ -130,8 +131,14 @@ class CDPOTrainer(DPOTrainer):
 
         chosen_list = [torch.tensor(line["pos"]["ce_prob"] + [1]).to(policy_chosen_logps.device) for line in
                        prob_result]
-        rejected_list = [1 - torch.tensor(line["neg"]["ce_prob"] + [0]).to(policy_chosen_logps.device) for line in
-                         prob_result]
+        if "Qwen" in self.model_name:
+            rejected_list = [1 - torch.tensor([0] + line["neg"]["ce_prob"]).to(policy_chosen_logps.device) for line in
+                             prob_result]
+        else:
+            rejected_list = [1 - torch.tensor(line["neg"]["ce_prob"] + [0]).to(policy_chosen_logps.device) for line in
+                             prob_result]
+
+
 
         all_list = chosen_list + rejected_list
         padding_sequences = pad_sequence(all_list, batch_first=True, padding_value=0)
@@ -143,6 +150,10 @@ class CDPOTrainer(DPOTrainer):
         else:
             chosen_logratio = chosen_rewards * (policy_chosen_logps - reference_chosen_logps).to(
                 self.accelerator.device)
+        if "Qwen" in self.model_name:
+            ones = torch.ones(batch_size, 1, device=rejected_rewards.device, dtype=rejected_rewards.dtype)
+            rejected_rewards = torch.cat([rejected_rewards, ones], dim=1)
+
         rejected_logratio = rejected_rewards * (policy_rejected_logps - reference_rejected_logps).to(
             self.accelerator.device)
         logits = chosen_logratio - rejected_logratio
@@ -256,10 +267,13 @@ def get_cdpo_train_dataset(dpo_data_with_ce_score_path, tokenizer):
     return clean_data, data_with_ce_score, num_data
 
 
-def cdpo_model_with_lora(model_path, lora_path, dpo_data_with_ce_score_path, hyperparameters):
+def cdpo_model_with_lora(model_name, model_path, lora_path, dpo_data_with_ce_score_path, hyperparameters):
     print(f"=" * 50)
     base_model, tokenizer = load_model(model_path)
     tokenizer.pad_token = tokenizer.eos_token
+    if "Qwen" in model_name:
+        tokenizer.add_special_tokens({"bos_token": tokenizer.eos_token})
+        tokenizer.bos_token_id = tokenizer.eos_token_id
     tokenizer.padding_side = 'left'
     train_dataset, train_dataset_with_ce_score, num_data = (
         get_cdpo_train_dataset(dpo_data_with_ce_score_path=dpo_data_with_ce_score_path, tokenizer=tokenizer))
@@ -282,7 +296,8 @@ def cdpo_model_with_lora(model_path, lora_path, dpo_data_with_ce_score_path, hyp
         learning_rate=learning_rate,
         weight_decay=hyperparameters["weight_decay"],
         optim="adamw_torch",
-        gradient_accumulation_steps=hyperparameters["gradient_accumulation_steps"]
+        gradient_accumulation_steps=hyperparameters["gradient_accumulation_steps"],
+        remove_unused_columns=False
     )
     peft_config = LoraConfig(
         r=hyperparameters["r"],
@@ -294,6 +309,7 @@ def cdpo_model_with_lora(model_path, lora_path, dpo_data_with_ce_score_path, hyp
 
     dpo_trainer = CDPOTrainer(
         only_neg=hyperparameters["only_neg"],
+        model_name=model_name,
         model=base_model,
         ref_model=None,
         args=training_args,
